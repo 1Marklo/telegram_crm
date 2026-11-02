@@ -460,7 +460,32 @@ def humanize_auth_status(status: str) -> str:
     return mapping.get(status, status)
 
 
+def classify_send_error(status: str) -> tuple[str, str, bool]:
+    """Return stable error code, user-facing explanation and safe retry hint."""
+    lowered = (status or "").lower()
+    if "floodwait" in lowered or "flood wait" in lowered:
+        return "FLOOD_WAIT", "Telegram временно ограничил частоту отправки. Нужно выдержать указанную паузу.", True
+    if "user_not_found" in lowered or "username_not_found" in lowered:
+        return "USER_NOT_FOUND", "Пользователь не найден. Проверьте Username.", False
+    if "username" in lowered and ("invalid" in lowered or "некоррект" in lowered):
+        return "INVALID_USERNAME", "Некорректный Username. Проверьте написание.", False
+    if "privacy" in lowered or "приват" in lowered or "userprivacyrestricted" in lowered:
+        return "PRIVACY_RESTRICTED", "Настройки приватности пользователя не позволяют начать переписку.", False
+    if "userisblocked" in lowered or "blocked" in lowered or "заблокирован" in lowered:
+        return "USER_BLOCKED", "Пользователь заблокировал этот аккаунт либо контакт недоступен.", False
+    if "phone number banned" in lowered or "номер заблокирован" in lowered:
+        return "ACCOUNT_RESTRICTED", "Telegram ограничил отправляющий аккаунт. Отправку нужно остановить.", False
+    if any(token in lowered for token in ("connection reset", "connection lost", "timed out", "timeout", "network", "server disconnected")):
+        return "NETWORK_ERROR", "Сбой сети. Результат отправки может быть неизвестен; сначала проверьте историю, не отправляйте повторно вслепую.", False
+    if "client_not_authorized" in lowered:
+        return "ACCOUNT_NOT_AUTHORIZED", "Telegram 账号未登录或授权失效。", False
+    return "UNKNOWN_ERROR", status or "未知错误", False
+
+
 def humanize_send_error(status: str) -> tuple[str, bool]:
+    code, explanation, retryable = classify_send_error(status)
+    if code != "UNKNOWN_ERROR":
+        return explanation, retryable
     if "FloodWait" in status:
         return "Лимит Telegram. Подождите и повторите отправку.", True
     if "Подождите" in status:
@@ -3862,11 +3887,16 @@ def create_app() -> FastAPI:
             user = await client.find_user_by_phone(request.phone)
 
         if not user:
-            return ui_error_response(
+            response = ui_error_response(
                 404,
                 "Пользователь не найден в Telegram",
-                "user_not_found"
+                "USER_NOT_FOUND"
             )
+            response.body = response.body.replace(
+                b'"retryable":false',
+                (b'"retryable":false,"username":' + json.dumps(request.username or "").encode("utf-8"))
+            )
+            return response
 
         idempotency_key = request.idempotency_key
         if not idempotency_key:
