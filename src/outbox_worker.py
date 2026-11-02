@@ -52,6 +52,27 @@ NON_RETRYABLE_ERRORS = (
 )
 
 
+UNCERTAIN_ERRORS = (
+    "ошибка отправки",
+    "network error",
+    "connection reset",
+    "connection lost",
+    "connection aborted",
+    "timed out",
+    "timeout",
+    "temporarily unavailable",
+    "server disconnected",
+)
+
+
+def is_uncertain_error(error_message: Optional[str]) -> bool:
+    """Return True when Telegram may have accepted the message despite an error."""
+    if not error_message:
+        return False
+    lowered = error_message.lower()
+    return any(token in lowered for token in UNCERTAIN_ERRORS)
+
+
 def is_retryable_error(error_message: Optional[str]) -> bool:
     if not error_message:
         return True
@@ -410,7 +431,15 @@ class OutboxWorker:
                             None
                         )
                     else:
-                        if is_retryable_error(message):
+                        if is_uncertain_error(message):
+                            await mark_outbox_uncertain(session, outbox, message)
+                            await self.update_ui_history_status(
+                                session,
+                                outbox.payload,
+                                "uncertain",
+                                message
+                            )
+                        elif is_retryable_error(message):
                             await mark_outbox_result(session, outbox, False, message)
                             await self.update_ui_history_status(
                                 session,
