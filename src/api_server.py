@@ -473,14 +473,14 @@ def classify_send_error(status: str) -> tuple[str, str, bool]:
         return "INVALID_USERNAME", "Некорректный Username. Проверьте написание.", False
     if "privacy" in lowered or "приват" in lowered or "userprivacyrestricted" in lowered:
         return "PRIVACY_RESTRICTED", "Настройки приватности пользователя не позволяют начать переписку.", False
-    if "userisblocked" in lowered or "blocked" in lowered or "заблокирован" in lowered:
-        return "USER_BLOCKED", "Пользователь заблокировал этот аккаунт либо контакт недоступен.", False
-    if "phone number banned" in lowered or "номер заблокирован" in lowered:
+    if "phone number banned" in lowered or "номер заблокирован" in lowered or "account banned" in lowered:
         return "ACCOUNT_RESTRICTED", "Telegram ограничил отправляющий аккаунт. Отправку нужно остановить.", False
+    if "userisblocked" in lowered or "user blocked" in lowered or "пользователь заблокировал" in lowered:
+        return "USER_BLOCKED", "Пользователь заблокировал этот аккаунт либо контакт недоступен.", False
     if any(token in lowered for token in ("connection reset", "connection lost", "timed out", "timeout", "network", "server disconnected")):
         return "NETWORK_ERROR", "Сбой сети. Результат отправки может быть неизвестен; сначала проверьте историю, не отправляйте повторно вслепую.", False
     if "client_not_authorized" in lowered:
-        return "ACCOUNT_NOT_AUTHORIZED", "Telegram 账号未登录或授权失效。", False
+        return "ACCOUNT_NOT_AUTHORIZED", "Telegram账号未登录或授权已失效。", False
     return "UNKNOWN_ERROR", status or "未知错误", False
 
 
