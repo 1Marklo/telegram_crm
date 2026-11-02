@@ -118,26 +118,16 @@ def update_outbox_status(
 
 async def _acquire_next_outbox(db: AsyncSession, dialect_name: Optional[str]) -> Optional[MessageOutbox]:
     now = datetime.utcnow()
-    # Timeout для orphaned messages: если message в "processing" > 5 минут, считаем его orphaned
-    timeout_threshold = now - timedelta(minutes=5)
-
-    # Исключаем только АКТИВНЫЕ processing messages (не orphaned)
+    # Only explicitly queued/retryable rows are claimable. Stale processing
+    # rows are quarantined by startup recovery; never let a second worker claim
+    # them based on age alone, because the original send may still be in flight.
     processing_chat_ids = select(MessageOutbox.chat_id).filter(
         MessageOutbox.status == "processing",
-        MessageOutbox.updated_at >= timeout_threshold,  # только fresh processing
         MessageOutbox.chat_id > 0
     )
 
     stmt = select(MessageOutbox).filter(
-        or_(
-            # Обычные queued/failed messages
-            MessageOutbox.status.in_(["queued", "failed"]),
-            # НОВОЕ: orphaned processing messages (старше 5 минут)
-            and_(
-                MessageOutbox.status == "processing",
-                MessageOutbox.updated_at < timeout_threshold
-            )
-        ),
+        MessageOutbox.status.in_(["queued", "failed"]),
         or_(
             MessageOutbox.chat_id == 0,
             ~MessageOutbox.chat_id.in_(processing_chat_ids)
