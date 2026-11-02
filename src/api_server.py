@@ -403,7 +403,8 @@ def ui_error_response(
     status_code: int,
     message: str,
     code: Optional[str] = None,
-    retryable: bool = False
+    retryable: bool = False,
+    context: Optional[dict] = None
 ) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -411,7 +412,8 @@ def ui_error_response(
             "success": False,
             "message": message,
             "code": code,
-            "retryable": retryable
+            "retryable": retryable,
+            **(context or {})
         }
     )
 
@@ -3887,16 +3889,12 @@ def create_app() -> FastAPI:
             user = await client.find_user_by_phone(request.phone)
 
         if not user:
-            response = ui_error_response(
+            return ui_error_response(
                 404,
                 "Пользователь не найден в Telegram",
-                "USER_NOT_FOUND"
+                "USER_NOT_FOUND",
+                context={"username": request.username or ""}
             )
-            response.body = response.body.replace(
-                b'"retryable":false',
-                (b'"retryable":false,"username":' + json.dumps(request.username or "").encode("utf-8"))
-            )
-            return response
 
         idempotency_key = request.idempotency_key
         if not idempotency_key:
