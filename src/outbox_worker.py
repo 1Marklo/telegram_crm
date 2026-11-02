@@ -23,7 +23,8 @@ from src.bridge import CRMTelegramBridge
 from src.outbox import (
     acquire_next_outbox,
     mark_outbox_result,
-    mark_outbox_non_retryable
+    mark_outbox_non_retryable,
+    mark_outbox_uncertain
 )
 
 
@@ -39,6 +40,15 @@ NON_RETRYABLE_ERRORS = (
     "task_id is required",
     "activity_id is required",
     "unknown_source",
+    "floodwait",
+    "flood wait",
+    "userprivacyrestrictederror",
+    "privacy restricted",
+    "пользователь запретил сообщения",
+    "пользователь запретил сообщения от незнакомцев",
+    "контакт отказался от сообщений",
+    "phone number banned",
+    "номер заблокирован telegram",
 )
 
 
@@ -93,9 +103,10 @@ class OutboxWorker:
 
     async def recover_orphaned_messages(self) -> None:
         """
-        Fix #16: Recover orphaned messages from previous crashes.
+        Recover stale processing messages without risking duplicate delivery.
 
-        Finds messages stuck in 'processing' status and returns them to queue.
+        A process may crash after Telegram accepted a message but before the
+        database commit. Such messages must be reviewed, never auto-retried.
         This is called on startup to handle unclean shutdowns/crashes.
         """
         from src.database import SessionLocal, MessageOutbox
@@ -119,22 +130,21 @@ class OutboxWorker:
                 logger.info("✅ No orphaned messages found")
                 return
 
-            logger.warning(f"⚠️ Found {len(orphaned)} orphaned messages, returning to queue...")
+            logger.warning(f"⚠️ Found {len(orphaned)} orphaned messages; marking outcome uncertain (manual review required)...")
 
             for outbox in orphaned:
                 logger.info(
                     f"🔄 Recovering orphaned message: id={outbox.id} "
                     f"chat_id={outbox.chat_id} attempts={outbox.attempts}"
                 )
-                outbox.status = "failed"
+                outbox.status = "uncertain"
                 outbox.updated_at = datetime.utcnow()
-                # Don't increment attempts - this wasn't a real delivery attempt
-                # Schedule immediate retry
-                outbox.next_attempt_at = datetime.utcnow()
+                # Never automatically resend: Telegram may already have accepted it.
+                outbox.next_attempt_at = None
                 session.add(outbox)
 
             await session.commit()
-            logger.info(f"✅ Recovered {len(orphaned)} orphaned messages")
+            logger.info(f"✅ Marked {len(orphaned)} orphaned messages as uncertain; no automatic retry scheduled")
 
     async def initialize(self) -> None:
         logger.info("📦 Инициализация outbox worker...")
@@ -425,11 +435,15 @@ class OutboxWorker:
                 if outbox:
                     try:
                         async with SessionLocal() as error_session:
-                            await mark_outbox_result(error_session, outbox, False, f"exception: {str(exc)[:200]}")
+                            # The exception may have happened after Telegram accepted the
+                            # message. Retrying blindly can send a duplicate, so require review.
+                            await mark_outbox_uncertain(
+                                error_session, outbox, f"exception: {str(exc)[:200]}"
+                            )
                             await self.update_ui_history_status(
                                 error_session,
                                 outbox.payload,
-                                "failed",
+                                "uncertain",
                                 str(exc)[:200]
                             )
                     except Exception as mark_exc:
