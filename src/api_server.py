@@ -3980,7 +3980,7 @@ def create_app() -> FastAPI:
         await mark_outbox_result(db, outbox, success, None if success else status_message)
 
         if not success:
-            friendly, retryable = humanize_send_error(status_message)
+            error_code, friendly, retryable = classify_send_error(status_message)
             await log_ui_event(
                 "error",
                 "send_failed",
@@ -3992,8 +3992,9 @@ def create_app() -> FastAPI:
             return ui_error_response(
                 500,
                 friendly,
-                status_message,
-                retryable
+                error_code,
+                retryable,
+                context={"username": user.username or request.username or ""}
             )
 
         chat = None
