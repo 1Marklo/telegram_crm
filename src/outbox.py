@@ -251,3 +251,22 @@ async def mark_outbox_non_retryable(
         await db.rollback()
         logger.error(f"❌ Ошибка commit в mark_outbox_non_retryable для outbox_id={outbox.id}: {e}")
         raise
+
+
+async def mark_outbox_uncertain(
+    db: AsyncSession,
+    outbox: MessageOutbox,
+    error_message: str
+) -> None:
+    """Mark delivery outcome as unknown; this state is never auto-retried."""
+    outbox.attempts += 1
+    update_outbox_status(db, outbox, "uncertain")
+    mark_attempt(db, outbox, "uncertain", error_message=error_message)
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            f"Failed to persist uncertain outbox state for outbox_id={outbox.id}: {exc}"
+        )
+        raise
